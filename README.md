@@ -31,7 +31,7 @@ To run this application on Gnoppix 26 (it may work on Debian 13/14 based system)
 Open a terminal and run:
 
 
-   sudo apt update  sudo apt install python3 python3-pyqt6 gnupg2  
+   sudo apt update  sudo apt install python3 python3-pyqt6 gnupg (gnupg2)  
 
 _Note: If gpg2 is not available, the application will automatically fall back to gpg._
 

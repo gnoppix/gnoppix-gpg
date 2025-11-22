@@ -1,0 +1,22 @@
+[Desktop Entry]
+# The Type must be Application for a program that can be executed
+Type=Application
+# The Version of the specification this file complies with
+Version=1.0
+
+# The name shown in the application menu
+Name=Gnoppix GPG Generator
+# The secondary description (will often appear as a tooltip or comment)
+Comment=Gnoppix GPG GUI
+
+# The command to execute (use the full path)
+Exec=/usr/bin/gnoppix_gpggen
+
+# Specify that the application is a GUI and does NOT need a terminal window
+Terminal=false
+
+# Optional: Set the icon. It will search system icon themes first.
+Icon=gnoppix-logo # Replace with a proper icon name/path if available
+
+# Optional: Where to place it in the menu (e.g., Utility, Security)
+Categories=Utility;Security;
