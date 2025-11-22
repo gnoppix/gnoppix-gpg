@@ -38,9 +38,11 @@ _Note: If gpg2 is not available, the application will automatically fall back to
 🛠️ How to Use
 --------------
 
-1.  **Download the Script:**Save the application file as gnoppix\_gpggen.py .
+1.  **Download the Script:**Save the application file as gnoppix\_gpggen
+
+2.  run a chmod +x gnoppix\_gpggen 
     
-2.  python3 python3 gnoppix\_gpggen.py  
+2.  run ./gnoppix\_gpggen   
     
 3.  **Follow the Wizard:**
     

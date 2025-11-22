@@ -1,12 +1,10 @@
+#!/usr/bin/env python3
 #------------------------------------------------------------------
 # Description: Gnoppix GPG KeyGen Dialogue for Debian / Trixie 
 # Authors: Andreas Mueller
 # Website: https://www.gnoppix.org
 # Version 1.6 - 11/22/25 
 #------------------------------------------------------------------
-
-
-
 import sys
 import secrets
 import shutil
@@ -591,7 +589,7 @@ class ModernGpgWizard(QMainWindow):
         QMessageBox.information(self, "About", 
             "Gnoppix GPG Key Generator\n"
             "Target System: Gnoppix 26\n"
-            "Version: 1.4\n\n"
+            "Version: 1.6\n\n"
             f"Using GPG Binary: {GPG_BIN}"
         )
 
