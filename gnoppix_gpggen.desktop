@@ -3,7 +3,7 @@
 Type=Application
 # The Version of the specification this file complies with
 Version=1.0
-
+Icon=kgpg
 # The name shown in the application menu
 Name=Gnoppix GPG Generator
 # The secondary description (will often appear as a tooltip or comment)

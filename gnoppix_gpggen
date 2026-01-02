@@ -3,7 +3,7 @@
 # Description: Gnoppix GPG KeyGen Dialogue for Debian / Trixie 
 # Authors: Andreas Mueller
 # Website: https://www.gnoppix.org
-# Version 1.6 - 11/22/25 
+# Version 2.7 - Updated for Private Key Export
 #------------------------------------------------------------------
 import sys
 import secrets
@@ -15,10 +15,13 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QRadioButton, QLineEdit, QComboBox, QPushButton,
     QTextEdit, QLabel, QMessageBox, QGridLayout, QFrame, QScrollArea,
-    QProgressBar, QDialog, QInputDialog, QMenu
+    QProgressBar, QDialog, QInputDialog, QMenu, QFileDialog
 )
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor, QClipboard, QAction
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+
+# ... [Configuration Helpers & Worker Classes (GpgWorker, GpgPublishWorker) remain unchanged] ...
+# ... [KeyDetailsDialog class remains unchanged] ...
 
 # ---------------------------------------------------------
 # Configuration & Helpers
@@ -190,7 +193,8 @@ QMenu::item:selected { background-color: #10B981; color: white; }
 class ModernGpgWizard(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Gnoppix GPG Key generator for Gnoppix 26")
+        # Updated Title to 2.7
+        self.setWindowTitle("Gnoppix GPG Key generator for Gnoppix 26 (v2.7)")
         self.resize(900, 850)
         self.setStyleSheet(STYLESHEET)
         
@@ -214,11 +218,6 @@ class ModernGpgWizard(QMainWindow):
     def init_menu(self):
         menu_bar = self.menuBar()
         
-        # NOTE: Full right-alignment of specific items is not standard 
-        # behavior for QMenuBar and is often platform-dependent or requires 
-        # complex workarounds (like using a QWidget instead of QMenuBar). 
-        # We will use the standard order: Publish, Option, Help, Quit.
-
         # Publish Menu
         publish_menu = menu_bar.addMenu("Publish")
         action_publish_last = QAction("Publish Last Generated Key", self)
@@ -235,6 +234,16 @@ class ModernGpgWizard(QMainWindow):
         action_edit = QAction("Edit Key (Change Passphrase)", self)
         action_edit.triggered.connect(self.menu_edit_key)
         option_menu.addAction(action_edit)
+
+        action_export = QAction("Export Public Key to File...", self)
+        action_export.triggered.connect(self.menu_export_public_key)
+        option_menu.addAction(action_export)
+
+        # --- NEW EXPORT PRIVATE KEY ACTION ---
+        action_export_priv = QAction("Export Private Key to File...", self)
+        action_export_priv.triggered.connect(self.menu_export_private_key)
+        option_menu.addAction(action_export_priv)
+        # -------------------------------------
 
         action_info = QAction("Display Key Info", self)
         action_info.triggered.connect(self.menu_display_info)
@@ -274,8 +283,8 @@ class ModernGpgWizard(QMainWindow):
         group = QGroupBox("Step 1: Choose Encryption Strength")
         layout = QVBoxLayout()
         
-        self.radio_quick = QRadioButton("Quick Encryption (ECC / Ed25519)")
-        lbl_quick = QLabel("Fast & Modern (256-bit). Ideal for standard hardware.")
+        self.radio_quick = QRadioButton("Quick Encryption (RSA 3072)")
+        lbl_quick = QLabel("Fast & Modern (128-bit equivalent). Compatible with all GPG versions.")
         lbl_quick.setStyleSheet("color: #9CA3AF; font-size: 12px; margin-left: 28px;")
         
         self.radio_military = QRadioButton("Military High Grade Encryption (RSA 4096)")
@@ -375,7 +384,10 @@ class ModernGpgWizard(QMainWindow):
             fingerprints = []
             for line in sec_keys.stdout.splitlines():
                 if line.startswith("fpr:"):
-                    fingerprints.append(line.split(":")[9])
+                    # The fingerprint is at index 9 for the fpr line
+                    parts = line.split(':')
+                    if len(parts) > 9:
+                        fingerprints.append(parts[9])
 
             for fpr in fingerprints:
                 self.log(f"Deleting secret key: {fpr}")
@@ -393,38 +405,89 @@ class ModernGpgWizard(QMainWindow):
             return False
 
     def get_key_details_block(self, email):
+        """
+        Retrieves key details and fingerprint for a given email using gpg --list-keys --with-colons.
+        Returns (details_string, fingerprint) or (error_message, None)
+        """
         try:
-            result = subprocess.run([GPG_BIN, '--list-keys', '--with-colons', email], capture_output=True, text=True)
-            lines = result.stdout.splitlines()
+            cmd = [GPG_BIN, '--list-keys', '--with-colons', email]
+            self.log(f"DEBUG: Running command: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True
+            )
             
+            # Log the raw output for debugging
+            if result.stdout:
+                self.log(f"DEBUG: GPG STDOUT:\n{result.stdout.strip()}")
+            if result.stderr:
+                self.log(f"DEBUG: GPG STDERR:\n{result.stderr.strip()}")
+
+            lines = result.stdout.splitlines()
+        
             key_id = "Unknown"
             fingerprint = "Unknown"
             uid = "Unknown"
             validity_str = "Unknown"
             
+            pub_data = None
+            fpr_data = None
+            uid_data = None
+
+            # 1. First pass: Collect data blocks regardless of order
             for line in lines:
                 parts = line.split(':')
-                if parts[0] == 'pub':
-                    key_id = parts[4][-16:]
-                    # Field 7 is expiration time (seconds since epoch)
-                    if len(parts) > 6 and parts[6]:
+                
+                # Collect the first instance of each required block
+                if parts[0] == 'pub' and pub_data is None:
+                    pub_data = parts
+                elif parts[0] == 'fpr' and fpr_data is None:
+                    fpr_data = parts
+                elif parts[0] == 'uid' and uid_data is None:
+                    uid_data = parts
+                
+            if result.returncode != 0 and not lines:
+                return f"GPG failed to find key for '{email}'. Check the Process Log for GPG output.", None
+
+            # 2. Extraction Phase: Process collected data
+
+            # Extract from PUB block
+            if pub_data and len(pub_data) > 4:
+                try:
+                    # Key ID (Field 5, index 4)
+                    key_id = pub_data[4][-16:]
+                    
+                    # Expiry date (Field 7, index 6)
+                    if len(pub_data) > 6 and pub_data[6]:
                         try:
-                            ts = int(parts[6])
+                            ts = int(pub_data[6])
                             dt = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
                             validity_str = f"Expires: {dt}"
                         except:
-                             validity_str = "Unknown Date"
+                            validity_str = "Unknown Date (Parsing Error)"
                     else:
                         validity_str = "Never Expires"
-                        
-                if parts[0] == 'fpr':
-                    fingerprint = parts[9]
-                if parts[0] == 'uid':
-                    uid = parts[9]
+                except Exception as e:
+                    self.log(f"ERROR: Failed to parse PUB line details: {e}")
             
-            if key_id == "Unknown":
-                return "Key not found.", None
+            # Extract from FPR block
+            if fpr_data and len(fpr_data) > 9:
+                 # Full Fingerprint (Field 10, index 9)
+                fingerprint = fpr_data[9]
+            
+            # Extract from UID block
+            if uid_data and len(uid_data) > 9:
+                # User ID (Field 10, index 9)
+                uid = uid_data[9]
+            
+            # 3. Final validation
+            if key_id == "Unknown" or fingerprint == "Unknown":
+                self.log(f"ERROR: Extraction failed. Key ID: {key_id}, Fingerprint: {fingerprint}")
+                # We return the specific failure reason if the key was found (GPG returned lines) but parsing failed.
+                return f"Key not found for email '{email}'. Key was found but required fields could not be parsed. Check GPG output in the log.", None
                 
+            # Format the fingerprint for display
             formatted_fpr = " ".join(fingerprint[i:i+4] for i in range(0, len(fingerprint), 4))
             
             details = (
@@ -440,7 +503,8 @@ class ModernGpgWizard(QMainWindow):
             )
             return details, fingerprint
         except Exception as e:
-            return f"Error retrieving key details: {e}", None
+            self.log(f"SYSTEM ERROR during key details lookup: {e}")
+            return f"SYSTEM ERROR retrieving key details: {e}", None
 
     # -----------------------------------------------------
     # Menu Actions
@@ -452,13 +516,139 @@ class ModernGpgWizard(QMainWindow):
             dialog = KeyDetailsDialog(details, title="Key Information", parent=self)
             dialog.exec()
 
+    def menu_export_public_key(self):
+        email, ok = QInputDialog.getText(self, "Export Key", "Enter Email Address of the key to export:")
+        if not ok or not email: return
+
+        details, fingerprint = self.get_key_details_block(email)
+        
+        # Show the detailed error message if the key isn't found
+        if not fingerprint:
+            QMessageBox.warning(self, "Error", details)
+            return
+
+        # 1. Get the output filename from the user
+        options = QFileDialog.Option.DontUseNativeDialog
+        default_filename = f"{email.split('@')[0]}_public.asc"
+        
+        filename, _ = QFileDialog.getSaveFileName(
+            self, 
+            "Save Public Key",
+            default_filename,
+            "ASCII Armored GPG Key (*.asc);;All Files (*)",
+            options=options
+        )
+
+        if filename:
+            self.log(f"Exporting public key {fingerprint[-8:]} for {email} to {filename}...")
+            
+            try:
+                # 2. Execute the GPG export command: gpg --output [file] --armor --export [email]
+                cmd = [
+                    GPG_BIN, 
+                    '--output', filename, 
+                    '--armor', 
+                    '--export', 
+                    email
+                ]
+                
+                process = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                
+                if process.returncode == 0:
+                    QMessageBox.information(
+                        self, 
+                        "Export Successful", 
+                        f"Public key for {email} has been successfully exported to:\n{filename}"
+                    )
+                    self.log(f"Successfully exported public key to {filename}.")
+                else:
+                    QMessageBox.critical(
+                        self, 
+                        "Export Failed", 
+                        f"GPG Export failed. Check log for details.\nError: {process.stderr}"
+                    )
+                    self.log(f"Export failed. GPG Error:\n{process.stderr}")
+
+            except Exception as e:
+                QMessageBox.critical(self, "System Error", f"An unexpected error occurred during export: {e}")
+                self.log(f"System error during export: {e}")
+
+    # --- NEW METHOD FOR PRIVATE KEY EXPORT ---
+    def menu_export_private_key(self):
+        """Exports the secret key to an ASCII armored file."""
+        email, ok = QInputDialog.getText(self, "Export Private Key", "Enter Email Address of the key to export:")
+        if not ok or not email: return
+
+        # Validate key exists
+        details, fingerprint = self.get_key_details_block(email)
+        if not fingerprint:
+            QMessageBox.warning(self, "Error", details)
+            return
+
+        # Explicit security warning for private keys
+        warn_reply = QMessageBox.warning(
+            self, "Security Warning",
+            "WARNING: You are about to export a SECRET (Private) key.\n\n"
+            "This file contains sensitive identity information. Anyone who obtains this file "
+            "and guesses your passphrase can impersonate you.\n\n"
+            "Do you want to continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if warn_reply == QMessageBox.StandardButton.No: return
+
+        # Get output filename
+        options = QFileDialog.Option.DontUseNativeDialog
+        default_filename = f"{email.split('@')[0]}_PRIVATE_key.asc"
+        
+        filename, _ = QFileDialog.getSaveFileName(
+            self, 
+            "Save SECRET Key - KEEP SECURE",
+            default_filename,
+            "ASCII Armored GPG Key (*.asc);;All Files (*)",
+            options=options
+        )
+
+        if filename:
+            self.log(f"Exporting secret key for {email}...")
+            try:
+                # Command for secret key export
+                # Note: This will likely trigger a GPG pinentry dialog for the passphrase
+                cmd = [
+                    GPG_BIN, 
+                    '--batch', '--yes', # Try to be non-interactive where possible
+                    '--output', filename, 
+                    '--armor', 
+                    '--export-secret-keys', 
+                    email
+                ]
+                
+                process = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+                
+                if process.returncode == 0:
+                    QMessageBox.information(
+                        self, 
+                        "Export Successful", 
+                        f"Secret key exported to:\n{filename}\n\nKEEP THIS FILE SAFE!"
+                    )
+                    self.log(f"Successfully exported secret key to {filename}.")
+                else:
+                    QMessageBox.critical(self, "Export Failed", f"GPG Error: {process.stderr}")
+                    self.log(f"Secret export failed: {process.stderr}")
+
+            except Exception as e:
+                QMessageBox.critical(self, "System Error", str(e))
+                self.log(f"System error during secret export: {e}")
+
     def menu_edit_key(self):
         email, ok = QInputDialog.getText(self, "Edit Key", "Enter Email Address of the key to edit:")
         if not ok or not email: return
 
         details, fingerprint = self.get_key_details_block(email)
+        
+        # Show the detailed error message if the key isn't found
         if not fingerprint:
-            QMessageBox.warning(self, "Error", "Key not found.")
+            QMessageBox.warning(self, "Error", details)
             return
 
         old_pass, ok = QInputDialog.getText(self, "Authentication", "Enter CURRENT Passphrase:", QLineEdit.EchoMode.Password)
@@ -539,7 +729,7 @@ class ModernGpgWizard(QMainWindow):
 
         details, fingerprint = self.get_key_details_block(email)
         if not fingerprint:
-            QMessageBox.warning(self, "Error", f"Key for {email} not found locally.")
+            QMessageBox.warning(self, "Error", details) # Use detailed error message
             return
 
         self.log(f"Attempting to publish key: {email} ({fingerprint})")
@@ -577,11 +767,12 @@ class ModernGpgWizard(QMainWindow):
     def menu_help(self):
         QMessageBox.information(self, "Help", 
             "GPG Key Generator Help\n\n"
-            "1. Choose Quick (ECC) or Military (RSA) strength.\n"
+            "1. Choose Quick (RSA 3072) or Military (RSA 4096) strength.\n"
             "2. Enter Name, Email, and Validity.\n"
             "3. Click 'Create'.\n\n"
             "The app handles key cleanup automatically if existing keys are found.\n"
-            "Use 'Option -> Edit Key' to rotate your passphrase.\n\n"
+            "Use 'Option -> Edit Key' to rotate your passphrase.\n"
+            "Use 'Option -> Export Public Key to File...' to save your key.\n\n"
             "Use 'Publish' to upload your public key to keyservers."
         )
 
@@ -589,7 +780,7 @@ class ModernGpgWizard(QMainWindow):
         QMessageBox.information(self, "About", 
             "Gnoppix GPG Key Generator\n"
             "Target System: Gnoppix 26\n"
-            "Version: 1.6\n\n"
+            "Version: 2.7\n\n" # Updated version number
             f"Using GPG Binary: {GPG_BIN}"
         )
 
@@ -614,8 +805,9 @@ class ModernGpgWizard(QMainWindow):
         passphrase = secrets.token_hex(16) # 32 hex chars
         
         if self.radio_quick.isChecked():
-            key_config = "Key-Type: eddsa\nKey-Curve: ed25519\nSubkey-Type: ecdh\nSubkey-Curve: curve25519"
+            key_config = "Key-Type: RSA\nKey-Length: 3072\nSubkey-Type: RSA\nSubkey-Length: 3072"
         else:
+            # Military High Grade Encryption (RSA 4096)
             key_config = "Key-Type: RSA\nKey-Length: 4096\nSubkey-Type: RSA\nSubkey-Length: 4096"
 
         batch_content = f"""
@@ -649,7 +841,7 @@ Passphrase: {passphrase}
 
         if success:
             key_id, formatted_fpr = self.get_new_key_info(email)
-            
+           
             full_details = (
                 "=================================================\n"
                 "           GPG KEY DETAILS (SAVE SECURELY)       \n"
@@ -688,9 +880,7 @@ Passphrase: {passphrase}
             key_id_match = re.search(r"Key ID:\s+([\d\w]+)", details)
             key_id = key_id_match.group(1) if key_id_match else "Unknown"
             
-            # The get_key_details_block returns a formatted fingerprint, 
-            # we need the unformatted one for the worker, but the formatted one 
-            # for the output. Let's return the formatted one.
+            # The get_key_details_block returns a formatted fingerprint
             fingerprint_match = re.search(r"Fingerprint:\s+([\d\w\s]+)", details)
             formatted_fpr = fingerprint_match.group(1) if fingerprint_match else "Error"
             

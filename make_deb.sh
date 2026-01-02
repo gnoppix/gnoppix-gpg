@@ -10,7 +10,7 @@
 
 # --- Configuration Variables ---
 PACKAGE_NAME="gnoppix-gpg-generator"
-VERSION="1.6" # Updated to match your latest build output
+VERSION="2.7" # Updated to match your latest build output
 ARCHITECTURE="all" # 'all' for scripts like Python, 'amd64' for compiled binaries
 MAINTAINER="Gnoppix Linux <gnoppix@gnoppix.com>"
 DESCRIPTION_SHORT="Gnoppix GPG Key Generator Tool."
@@ -50,7 +50,7 @@ Priority: optional
 Architecture: $ARCHITECTURE
 Installed-Size: \$(du -ks $BUILD_DIR | cut -f 1)
 Maintainer: $MAINTAINER
-Depends: python3, python3-tkinter, python3-pyqt6, gnupg
+Depends: python3, python3-pyqt6, gnupg
 Description: $DESCRIPTION_SHORT
  $DESCRIPTION_LONG
 EOF
